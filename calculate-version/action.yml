@@ -1,0 +1,123 @@
+name: Calculate Version
+description: >
+  Sets up GitVersion and calculates semantic version properties from git history.
+  Ships with default GitVersion configs for common strategies. If the repo has its own
+  GitVersion.yml it is used automatically; otherwise the bundled default for the chosen
+  strategy is applied. A custom config file can also be injected to override everything.
+
+inputs:
+  gitversion-version:
+    description: GitVersion version spec to install
+    required: false
+    default: '6.x'
+  strategy:
+    description: >
+      Default GitVersion strategy when no GitVersion.yml exists in the repo.
+      Ignored if the repo already has a GitVersion.yml or config-file is set.
+    required: false
+    default: 'continuous-deployment'
+  config-file:
+    description: >
+      Path to a custom GitVersion config file. Overrides both the repo-level
+      GitVersion.yml and the strategy default.
+    required: false
+    default: ''
+
+outputs:
+  major:
+    description: The major version number
+    value: ${{ steps.gitversion.outputs.major }}
+  minor:
+    description: The minor version number
+    value: ${{ steps.gitversion.outputs.minor }}
+  patch:
+    description: The patch version number
+    value: ${{ steps.gitversion.outputs.patch }}
+  majorMinorPatch:
+    description: 'Major.Minor.Patch version string'
+    value: ${{ steps.gitversion.outputs.majorMinorPatch }}
+  semVer:
+    description: The semantic version (may include prerelease label)
+    value: ${{ steps.gitversion.outputs.semVer }}
+  fullSemVer:
+    description: The full semantic version including metadata
+    value: ${{ steps.gitversion.outputs.fullSemVer }}
+  preReleaseLabel:
+    description: The prerelease label (e.g. pre, beta, rc)
+    value: ${{ steps.gitversion.outputs.preReleaseLabel }}
+  preReleaseNumber:
+    description: The prerelease number
+    value: ${{ steps.gitversion.outputs.preReleaseNumber }}
+  commitsSinceVersionSource:
+    description: Number of commits since the version source (tag)
+    value: ${{ steps.gitversion.outputs.commitsSinceVersionSource }}
+  assemblySemVer:
+    description: Assembly semantic version (for .NET)
+    value: ${{ steps.gitversion.outputs.assemblySemVer }}
+  assemblySemFileVer:
+    description: Assembly file semantic version (for .NET)
+    value: ${{ steps.gitversion.outputs.assemblySemFileVer }}
+  informationalVersion:
+    description: Informational version string (for .NET)
+    value: ${{ steps.gitversion.outputs.informationalVersion }}
+  branchName:
+    description: The current branch name
+    value: ${{ steps.gitversion.outputs.branchName }}
+  sha:
+    description: The current commit SHA
+    value: ${{ steps.gitversion.outputs.sha }}
+  shortSha:
+    description: The current commit short SHA
+    value: ${{ steps.gitversion.outputs.shortSha }}
+  configSource:
+    description: Where the GitVersion config came from (repo, default, or custom)
+    value: ${{ steps.config.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve GitVersion config
+      id: config
+      shell: bash
+      run: |
+        # Priority: custom config-file > repo GitVersion.yml > bundled default
+        if [[ -n "${{ inputs.config-file }}" ]]; then
+          echo "path=${{ inputs.config-file }}" >> $GITHUB_OUTPUT
+          echo "source=custom" >> $GITHUB_OUTPUT
+          echo "Using custom config: ${{ inputs.config-file }}"
+        elif [[ -f "GitVersion.yml" ]]; then
+          echo "path=GitVersion.yml" >> $GITHUB_OUTPUT
+          echo "source=repo" >> $GITHUB_OUTPUT
+          echo "Using repo config: GitVersion.yml"
+        elif [[ -f "GitVersion.yaml" ]]; then
+          echo "path=GitVersion.yaml" >> $GITHUB_OUTPUT
+          echo "source=repo" >> $GITHUB_OUTPUT
+          echo "Using repo config: GitVersion.yaml"
+        elif [[ -f "gitversion.yml" ]]; then
+          echo "path=gitversion.yml" >> $GITHUB_OUTPUT
+          echo "source=repo" >> $GITHUB_OUTPUT
+          echo "Using repo config: gitversion.yml"
+        else
+          STRATEGY="${{ inputs.strategy }}"
+          DEFAULT_CONFIG="${{ github.action_path }}/../examples/gitversion-${STRATEGY}.yml"
+
+          if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+            echo "::error::Unknown strategy '$STRATEGY'. Available: continuous-deployment, continuous-delivery"
+            exit 1
+          fi
+
+          echo "path=${DEFAULT_CONFIG}" >> $GITHUB_OUTPUT
+          echo "source=default" >> $GITHUB_OUTPUT
+          echo "No GitVersion config in repo — using bundled '${STRATEGY}' default"
+        fi
+
+    - name: Setup GitVersion
+      uses: gittools/actions/gitversion/setup@v4.2.0
+      with:
+        versionSpec: ${{ inputs.gitversion-version }}
+
+    - name: Execute GitVersion
+      id: gitversion
+      uses: gittools/actions/gitversion/execute@v4.2.0
+      with:
+        configFilePath: ${{ steps.config.outputs.path }}

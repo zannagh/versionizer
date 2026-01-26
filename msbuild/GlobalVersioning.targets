@@ -1,0 +1,161 @@
+<!--
+  GlobalVersioning.targets
+  ========================
+  MSBuild targets for automatic version calculation using GitVersion.
+  Designed for local development and CI builds of .NET projects.
+
+  Usage:
+    Add to your Directory.Build.props:
+    <Import Project="path/to/GlobalVersioning.targets" />
+
+  Behavior:
+    - Debug builds use a hardcoded dev version (0.0.1-dev) to avoid running GitVersion.
+    - Release builds run GitVersion CLI once, cache the result in .gitversion.done,
+      and reuse it for subsequent builds until the Git HEAD changes.
+    - GitVersion tool is auto-installed globally if not already present.
+
+  Outputs set:
+    - Version              (FullSemVer)
+    - AssemblyVersion      (AssemblySemVer)
+    - FileVersion          (AssemblySemFileVer)
+    - InformationalVersion (InformationalVersion)
+    - ApplicationVersion   (AssemblySemFileVer, for ClickOnce)
+    - ApplicationRevision  (0)
+-->
+<Project InitialTargets="DecideVersioningBehavior">
+
+  <!--
+    Phase 1: DecideVersioningBehavior
+    Determines whether GitVersion needs to run by checking:
+    - Configuration (Debug skips GitVersion entirely)
+    - Whether cached output exists and matches current HEAD
+  -->
+  <Target Name="DecideVersioningBehavior">
+    <!-- Determine correct CLI command per platform -->
+    <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+      <GitVersionTool>dotnet gitversion</GitVersionTool>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+      <GitVersionTool>dotnet-gitversion</GitVersionTool>
+    </PropertyGroup>
+
+    <!-- Locate the repository root by finding GitVersion.yml -->
+    <PropertyGroup>
+      <RepositoryRoot>$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), 'GitVersion.yml'))</RepositoryRoot>
+      <GitVersionMarkerFile>$(RepositoryRoot)/.gitversion.done</GitVersionMarkerFile>
+    </PropertyGroup>
+
+    <!-- Get current HEAD SHA for cache validation -->
+    <Exec Condition="Exists($(GitVersionMarkerFile)) and '$(Configuration)' != 'Debug'"
+          Command="git rev-parse HEAD"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="low"
+          IgnoreStandardErrorWarningFormat="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitSha" />
+    </Exec>
+
+    <!-- Check if cached version is still valid -->
+    <PropertyGroup Condition="!Exists($(GitVersionMarkerFile))">
+      <IsGitVersionUpToDate>Unknown</IsGitVersionUpToDate>
+    </PropertyGroup>
+    <PropertyGroup Condition="Exists($(GitVersionMarkerFile))">
+      <GitVersionJson>$([System.IO.File]::ReadAllText($(GitVersionMarkerFile)))</GitVersionJson>
+      <IsGitVersionUpToDate>$([System.Convert]::ToString($([System.Text.RegularExpressions.Regex]::IsMatch($(GitVersionJson), '$(GitSha)'))))</IsGitVersionUpToDate>
+    </PropertyGroup>
+
+    <!-- Decide whether to run GitVersion -->
+    <PropertyGroup Condition="$(IsGitVersionUpToDate) == 'False' or $(IsGitVersionUpToDate) == 'Unknown'">
+      <RunGitVersion>true</RunGitVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition="Exists($(GitVersionMarkerFile)) and $(IsGitVersionUpToDate) == 'True'">
+      <RunGitVersion>false</RunGitVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition="!Exists($(GitVersionMarkerFile))">
+      <RunGitVersion>true</RunGitVersion>
+    </PropertyGroup>
+
+    <!-- Debug builds: skip GitVersion, use hardcoded dev version -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+      <RunGitVersion>false</RunGitVersion>
+      <Version>0.0.1-dev</Version>
+      <AssemblyVersion>0.0.1.0</AssemblyVersion>
+      <FileVersion>0.0.1.0</FileVersion>
+      <InformationalVersion>0.0.1-dev</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+  <!--
+    Phase 2: GlobalVersioningInit
+    Runs GitVersion CLI and caches the JSON output when the cache is stale or missing.
+    Auto-installs gitversion.tool if not already available.
+  -->
+  <Target Name="GlobalVersioningInit" AfterTargets="DecideVersioningBehavior"
+          Condition="!Exists($(GitVersionMarkerFile)) or $(RunGitVersion) == 'true'">
+    <Message Importance="high" Text="Running GitVersion..." />
+
+    <!-- Check if gitversion.tool is installed -->
+    <PropertyGroup>
+      <GitVersionToolInstalled Condition="Exists($(GitVersionMarkerFile))">true</GitVersionToolInstalled>
+    </PropertyGroup>
+    <Exec Condition="'$(GitVersionToolInstalled)' != 'true'"
+          Command="dotnet tool list -g"
+          ConsoleToMsBuild="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GlobalToolsList" />
+    </Exec>
+
+    <PropertyGroup Condition="'$(GitVersionToolInstalled)' != 'true'">
+      <GitVersionToolInstalled Condition="'$(GlobalToolsList)' != '' and $(GlobalToolsList.Contains('gitversion.tool'))">true</GitVersionToolInstalled>
+      <GitVersionToolInstalled Condition="'$(GitVersionToolInstalled)' == ''">false</GitVersionToolInstalled>
+    </PropertyGroup>
+
+    <!-- Auto-install if missing -->
+    <Exec Condition="'$(GitVersionToolInstalled)' != 'true'"
+          Command="dotnet tool update --global gitversion.tool" />
+
+    <!-- Run GitVersion and cache output -->
+    <Message Text="GitVersion working directory: $(RepositoryRoot)" Importance="High" />
+    <Exec Condition="!Exists($(GitVersionMarkerFile)) or $(RunGitVersion) == 'true'"
+          Command="$(GitVersionTool) /output json"
+          StdOutEncoding="utf-8"
+          StdErrEncoding="utf-8"
+          ConsoleToMsBuild="true"
+          WorkingDirectory="$(RepositoryRoot)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitVersionJson" />
+    </Exec>
+
+    <WriteLinesToFile Condition="!Exists($(GitVersionMarkerFile)) or $(RunGitVersion) == 'true'"
+                      File="$(GitVersionMarkerFile)"
+                      Lines="$(GitVersionJson)"
+                      Overwrite="true"
+                      Encoding="UTF-8" />
+  </Target>
+
+  <!--
+    Phase 3: GlobalVersioning
+    Reads cached GitVersion JSON and extracts version properties into MSBuild properties.
+  -->
+  <Target Name="GlobalVersioning" AfterTargets="GlobalVersioningInit"
+          Condition="Exists($(GitVersionMarkerFile))">
+    <PropertyGroup>
+      <GitVersionJson>$([System.IO.File]::ReadAllText($(GitVersionMarkerFile)))</GitVersionJson>
+      <Version>$([System.Text.RegularExpressions.Regex]::Match($(GitVersionJson), 'FullSemVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</Version>
+      <AssemblyVersion>$([System.Text.RegularExpressions.Regex]::Match($(GitVersionJson), 'AssemblySemVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</AssemblyVersion>
+      <FileVersion>$([System.Text.RegularExpressions.Regex]::Match($(GitVersionJson), 'AssemblySemFileVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</FileVersion>
+      <InformationalVersion>$([System.Text.RegularExpressions.Regex]::Match($(GitVersionJson), 'InformationalVersion.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</InformationalVersion>
+      <ApplicationVersion>$([System.Text.RegularExpressions.Regex]::Match($(GitVersionJson), 'AssemblySemFileVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</ApplicationVersion>
+      <ApplicationRevision>0</ApplicationRevision>
+    </PropertyGroup>
+
+    <!-- Debug builds override with dev version -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+      <Version>0.0.1-dev</Version>
+      <AssemblyVersion>0.0.1.0</AssemblyVersion>
+      <FileVersion>0.0.1.0</FileVersion>
+      <InformationalVersion>0.0.1-dev</InformationalVersion>
+      <ApplicationVersion>0.0.1.0</ApplicationVersion>
+      <ApplicationRevision>0</ApplicationRevision>
+    </PropertyGroup>
+  </Target>
+
+</Project>

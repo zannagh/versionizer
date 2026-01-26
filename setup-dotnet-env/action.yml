@@ -1,0 +1,43 @@
+name: Setup .NET Environment
+description: Sets up the .NET SDK with optional NuGet authentication and GitVersion tooling.
+
+inputs:
+  dotnet-version:
+    description: .NET SDK version to install
+    required: false
+    default: '9.0.x'
+  nuget-source-url:
+    description: Private NuGet feed URL for authenticated package restore (e.g. GitHub Packages)
+    required: false
+    default: ''
+  nuget-auth-token:
+    description: Authentication token for the private NuGet feed
+    required: false
+    default: ''
+  install-gitversion-tool:
+    description: Whether to install gitversion.tool globally
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+        source-url: ${{ inputs.nuget-source-url || '' }}
+      env:
+        NUGET_AUTH_TOKEN: ${{ inputs.nuget-auth-token }}
+      if: inputs.nuget-source-url != ''
+
+    - name: Setup .NET SDK (no NuGet auth)
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+      if: inputs.nuget-source-url == ''
+
+    - name: Install GitVersion Tool
+      if: inputs.install-gitversion-tool == 'true'
+      shell: bash
+      run: dotnet tool install --global gitversion.tool --ignore-failed-sources

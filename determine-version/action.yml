@@ -1,0 +1,72 @@
+name: Determine Version
+description: >
+  Computes a final version string from GitVersion outputs and release context.
+  For manual releases, extracts the version from the tag. For automatic releases,
+  formats as {semver}-{prefix}.{number}.
+
+inputs:
+  is-manual-release:
+    description: Whether this is a manual (GitHub Release) triggered release
+    required: true
+  release-tag-name:
+    description: The release tag name (for manual releases, e.g. v1.2.3)
+    required: false
+    default: ''
+  release-prerelease:
+    description: Whether the GitHub release is marked as prerelease
+    required: false
+    default: 'false'
+  semver:
+    description: The majorMinorPatch from GitVersion (e.g. 1.2.3)
+    required: false
+    default: ''
+  prerelease-number:
+    description: The preReleaseNumber from GitVersion
+    required: false
+    default: ''
+  commits-since:
+    description: The commitsSinceVersionSource from GitVersion
+    required: false
+    default: ''
+  prerelease-prefix:
+    description: 'Prefix for prerelease versions (e.g. pre, beta, rc)'
+    required: false
+    default: 'pre'
+
+outputs:
+  version:
+    description: The computed version string
+    value: ${{ steps.compute.outputs.version }}
+  is_prerelease:
+    description: Whether this is a prerelease build
+    value: ${{ steps.compute.outputs.is_prerelease }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute version
+      id: compute
+      shell: bash
+      run: |
+        if [[ "${{ inputs.is-manual-release }}" == "true" ]]; then
+          TAG="${{ inputs.release-tag-name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${{ inputs.release-prerelease }}" >> $GITHUB_OUTPUT
+          echo "Manual release version: $VERSION"
+        else
+          SEMVER="${{ inputs.semver }}"
+          PRE_NUM="${{ inputs.prerelease-number }}"
+          COMMITS="${{ inputs.commits-since }}"
+          PREFIX="${{ inputs.prerelease-prefix }}"
+
+          if [[ -n "$PRE_NUM" && "$PRE_NUM" != "0" ]]; then
+            VERSION="${SEMVER}-${PREFIX}.${PRE_NUM}"
+          else
+            VERSION="${SEMVER}-${PREFIX}.${COMMITS:-1}"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          echo "Automatic prerelease version: $VERSION"
+        fi
