@@ -239,7 +239,7 @@ jobs:
           VERSION="${TAG#v}"
           MAJOR="${VERSION%%.*}"
           echo "Release tag: $TAG → Major version tag: v$MAJOR"
-          git tag -fa "v$MAJOR" -m "Release $TAG" HEAD
+          git tag -f "v$MAJOR" HEAD
           git push origin "v$MAJOR" --force
 
   # ============================================================================
