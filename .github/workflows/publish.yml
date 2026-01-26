@@ -217,6 +217,32 @@ jobs:
           files: artifacts/**/*.nupkg
 
   # ============================================================================
+  # UPDATE MAJOR VERSION TAG (stable manual releases only)
+  # ============================================================================
+  update-major-tag:
+    name: Update Major Version Tag
+    runs-on: ubuntu-latest
+    needs: [analyze, upload-to-release]
+    if: |
+      needs.analyze.outputs.is_manual_release == 'true' &&
+      needs.analyze.outputs.is_prerelease != 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update major version tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          MAJOR="${VERSION%%.*}"
+          echo "Release tag: $TAG → Major version tag: v$MAJOR"
+          git tag -fa "v$MAJOR" -m "Release $TAG" HEAD
+          git push origin "v$MAJOR" --force
+
+  # ============================================================================
   # PUBLISH TO GITHUB PACKAGES
   # ============================================================================
   publish-nuget:
@@ -271,7 +297,7 @@ jobs:
   summary:
     name: Workflow Summary
     runs-on: ubuntu-latest
-    needs: [analyze, validate-version, pack, changelog, create-prerelease, upload-to-release, publish-nuget]
+    needs: [analyze, validate-version, pack, changelog, create-prerelease, upload-to-release, update-major-tag, publish-nuget]
     if: always()
     steps:
       - name: Checkout
@@ -297,6 +323,7 @@ jobs:
             Changelog=${{ needs.changelog.result }}
             Create Prerelease=${{ needs.create-prerelease.result }}
             Upload to Release=${{ needs.upload-to-release.result }}
+            Update Major Tag=${{ needs.update-major-tag.result }}
             Publish to GitHub Packages=${{ needs.publish-nuget.result }}
           additional-sections: |
             ### NuGet Package
