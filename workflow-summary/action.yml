@@ -1,0 +1,141 @@
+name: Workflow Summary
+description: >
+  Generates a comprehensive GitHub Actions step summary with job results,
+  version info, release decision details, and changelog. Writes to
+  GITHUB_STEP_SUMMARY. Add project-specific sections via the
+  'additional-sections' input.
+
+inputs:
+  version:
+    description: The package/release version
+    required: false
+    default: ''
+  is-prerelease:
+    description: Whether this is a prerelease
+    required: false
+    default: ''
+  semver:
+    description: The majorMinorPatch from GitVersion
+    required: false
+    default: ''
+  full-semver:
+    description: The fullSemVer from GitVersion
+    required: false
+    default: ''
+  prerelease-number:
+    description: The preReleaseNumber from GitVersion
+    required: false
+    default: ''
+  commits-since:
+    description: The commitsSinceVersionSource from GitVersion
+    required: false
+    default: ''
+  should-release:
+    description: Whether a release should be created
+    required: false
+    default: ''
+  is-manual-release:
+    description: Whether this is a manual release
+    required: false
+    default: ''
+  skip-reason:
+    description: Why the release was skipped
+    required: false
+    default: ''
+  changelog:
+    description: The generated changelog content
+    required: false
+    default: ''
+  job-results:
+    description: >
+      Multiline list of job results in "Job Name=status" format.
+      Example:
+        Analyze=success
+        Build=success
+        Publish=skipped
+    required: false
+    default: ''
+  additional-sections:
+    description: >
+      Additional markdown to append to the summary (for project-specific sections).
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Generate Summary
+      shell: bash
+      run: |
+        echo "## Build & Publish Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # --- Job Results ---
+        if [[ -n "${{ inputs.job-results }}" ]]; then
+          echo "### Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          while IFS='=' read -r job status; do
+            [[ -z "$job" ]] && continue
+            echo "| ${job} | \`${status}\` |" >> $GITHUB_STEP_SUMMARY
+          done <<< "${{ inputs.job-results }}"
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # --- Version Info ---
+        if [[ -n "${{ inputs.version }}" ]]; then
+          echo "### Version Info" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ inputs.semver }}" ]]; then
+            echo "| SemVer | \`${{ inputs.semver }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ inputs.full-semver }}" ]]; then
+            echo "| Full SemVer | \`${{ inputs.full-semver }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| Version | \`${{ inputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ inputs.is-prerelease }}" ]]; then
+            echo "| Is Prerelease | \`${{ inputs.is-prerelease }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ inputs.prerelease-number }}" ]]; then
+            echo "| Prerelease Number | \`${{ inputs.prerelease-number }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ inputs.commits-since }}" ]]; then
+            echo "| Commits Since Tag | \`${{ inputs.commits-since }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # --- Release Decision ---
+        if [[ -n "${{ inputs.should-release }}" ]]; then
+          echo "### Release Decision" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Should Release**: \`${{ inputs.should-release }}\`" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ inputs.is-manual-release }}" ]]; then
+            echo "- **Is Manual Release**: \`${{ inputs.is-manual-release }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ inputs.skip-reason }}" ]]; then
+            echo "- **Skip Reason**: ${{ inputs.skip-reason }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # --- Additional Sections ---
+        if [[ -n "${{ inputs.additional-sections }}" ]]; then
+          echo "${{ inputs.additional-sections }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # --- Changelog ---
+        if [[ -n "${{ inputs.changelog }}" ]]; then
+          echo "### Changelog" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Click to expand</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ inputs.changelog }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi

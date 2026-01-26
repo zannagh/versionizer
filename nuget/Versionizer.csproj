@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>Versionizer</PackageId>
+    <Description>Automatic GitVersion-based semantic versioning for .NET projects. Works in any build environment: dotnet CLI, Visual Studio, Rider, VSCode. Unlike GitVersion.MsBuild, uses the CLI tool instead of a managed MSBuild task, so it works across all IDE versions.</Description>
+    <Authors>zannagh</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/zannagh/versionizer</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/zannagh/versionizer</RepositoryUrl>
+    <PackageTags>gitversion;versioning;semver;semantic-versioning;msbuild</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- This package contains no compiled code — only MSBuild .props and .targets -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!-- No source files to compile -->
+  <ItemGroup>
+    <Compile Remove="**\*" />
+  </ItemGroup>
+
+  <!-- Pack the .props and .targets into the correct NuGet directories -->
+  <ItemGroup>
+    <None Include="build\**" Pack="true" PackagePath="build\" />
+    <None Include="buildTransitive\**" Pack="true" PackagePath="buildTransitive\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

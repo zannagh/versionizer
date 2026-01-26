@@ -1,0 +1,155 @@
+<!--
+  Versionizer.targets
+  ====================
+  Automatic GitVersion-based semantic versioning for .NET projects.
+  Works in any build environment: dotnet CLI, Visual Studio, Rider, VSCode.
+
+  How it works:
+    1. Debug builds skip GitVersion entirely and use $(VersionizerDebugVersion).
+    2. Release builds run the GitVersion CLI once, cache the JSON result in
+       .gitversion.done (keyed by Git HEAD SHA), and reuse it for all projects
+       in the solution until the HEAD changes.
+    3. The gitversion.tool is auto-installed globally if not already present.
+
+  Properties you can set in your project or Directory.Build.props:
+    - VersionizerEnabled        (default: true)  Set to false to skip versioning
+    - VersionizerDebugVersion   (default: 0.0.1-dev) Version used in Debug builds
+    - RepositoryRoot            (auto-detected)  Override if auto-detection fails
+
+  Properties set by Versionizer:
+    - Version              (FullSemVer)
+    - AssemblyVersion      (AssemblySemVer)
+    - FileVersion          (AssemblySemFileVer)
+    - InformationalVersion (InformationalVersion)
+    - ApplicationVersion   (AssemblySemFileVer, for ClickOnce)
+    - ApplicationRevision  (0)
+-->
+<Project InitialTargets="_VersionizerDecide">
+
+  <!--
+    Phase 1: Decide whether GitVersion needs to run.
+    Checks configuration, cache freshness, and the VersionizerEnabled flag.
+  -->
+  <Target Name="_VersionizerDecide" Condition="'$(VersionizerEnabled)' == 'true'">
+    <!-- Determine correct CLI command per platform -->
+    <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+      <_GitVersionTool>dotnet gitversion</_GitVersionTool>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+      <_GitVersionTool>dotnet-gitversion</_GitVersionTool>
+    </PropertyGroup>
+
+    <!--
+      Locate the repository root.
+      Try GitVersion.yml first (most .NET repos have one), then fall back to .git.
+      Users can also set RepositoryRoot explicitly in Directory.Build.props.
+    -->
+    <PropertyGroup Condition="'$(RepositoryRoot)' == ''">
+      <RepositoryRoot>$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildProjectDirectory), 'GitVersion.yml'))</RepositoryRoot>
+    </PropertyGroup>
+    <!-- Fallback: find .git (works for repos without GitVersion.yml) -->
+    <Exec Condition="'$(RepositoryRoot)' == ''"
+          Command="git rev-parse --show-toplevel"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="low"
+          IgnoreStandardErrorWarningFormat="true"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RepositoryRoot" />
+    </Exec>
+
+    <PropertyGroup>
+      <_GitVersionMarkerFile>$(RepositoryRoot)/.gitversion.done</_GitVersionMarkerFile>
+    </PropertyGroup>
+
+    <!-- Debug builds: skip GitVersion, use hardcoded dev version -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+      <_RunGitVersion>false</_RunGitVersion>
+      <Version>$(VersionizerDebugVersion)</Version>
+      <AssemblyVersion>0.0.1.0</AssemblyVersion>
+      <FileVersion>0.0.1.0</FileVersion>
+      <InformationalVersion>$(VersionizerDebugVersion)</InformationalVersion>
+    </PropertyGroup>
+
+    <!-- Release builds: check if cache is fresh -->
+    <Exec Condition="'$(Configuration)' != 'Debug' and Exists($(_GitVersionMarkerFile))"
+          Command="git rev-parse HEAD"
+          ConsoleToMsBuild="true"
+          StandardOutputImportance="low"
+          IgnoreStandardErrorWarningFormat="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitSha" />
+    </Exec>
+
+    <PropertyGroup Condition="'$(Configuration)' != 'Debug' and !Exists($(_GitVersionMarkerFile))">
+      <_RunGitVersion>true</_RunGitVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)' != 'Debug' and Exists($(_GitVersionMarkerFile))">
+      <_GitVersionCachedJson>$([System.IO.File]::ReadAllText($(_GitVersionMarkerFile)))</_GitVersionCachedJson>
+      <_CacheMatchesHead>$([System.Text.RegularExpressions.Regex]::IsMatch($(_GitVersionCachedJson), '$(_GitSha)'))</_CacheMatchesHead>
+      <_RunGitVersion Condition="'$(_CacheMatchesHead)' != 'True'">true</_RunGitVersion>
+      <_RunGitVersion Condition="'$(_CacheMatchesHead)' == 'True'">false</_RunGitVersion>
+    </PropertyGroup>
+  </Target>
+
+  <!--
+    Phase 2: Run GitVersion CLI and cache the output.
+    Auto-installs gitversion.tool if not already available.
+  -->
+  <Target Name="_VersionizerRun" AfterTargets="_VersionizerDecide"
+          Condition="'$(VersionizerEnabled)' == 'true' and '$(_RunGitVersion)' == 'true'">
+    <Message Importance="high" Text="Versionizer: running GitVersion..." />
+
+    <!-- Check if gitversion.tool is installed -->
+    <Exec Command="dotnet tool list -g"
+          ConsoleToMsBuild="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GlobalToolsList" />
+    </Exec>
+
+    <PropertyGroup>
+      <_GitVersionToolInstalled Condition="'$(_GlobalToolsList)' != '' and $(_GlobalToolsList.Contains('gitversion.tool'))">true</_GitVersionToolInstalled>
+      <_GitVersionToolInstalled Condition="'$(_GitVersionToolInstalled)' == ''">false</_GitVersionToolInstalled>
+    </PropertyGroup>
+
+    <!-- Auto-install if missing -->
+    <Message Condition="'$(_GitVersionToolInstalled)' != 'true'" Importance="high"
+             Text="Versionizer: installing gitversion.tool..." />
+    <Exec Condition="'$(_GitVersionToolInstalled)' != 'true'"
+          Command="dotnet tool update --global gitversion.tool" />
+
+    <!-- Run GitVersion -->
+    <Exec Command="$(_GitVersionTool) /output json"
+          StdOutEncoding="utf-8"
+          StdErrEncoding="utf-8"
+          ConsoleToMsBuild="true"
+          WorkingDirectory="$(RepositoryRoot)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitVersionJson" />
+    </Exec>
+
+    <!-- Cache the output -->
+    <WriteLinesToFile File="$(_GitVersionMarkerFile)"
+                      Lines="$(_GitVersionJson)"
+                      Overwrite="true"
+                      Encoding="UTF-8" />
+  </Target>
+
+  <!--
+    Phase 3: Extract version properties from cached GitVersion JSON.
+  -->
+  <Target Name="_VersionizerApply" AfterTargets="_VersionizerRun"
+          Condition="'$(VersionizerEnabled)' == 'true' and '$(Configuration)' != 'Debug' and Exists($(_GitVersionMarkerFile))">
+    <PropertyGroup>
+      <_GitVersionJson>$([System.IO.File]::ReadAllText($(_GitVersionMarkerFile)))</_GitVersionJson>
+      <Version>$([System.Text.RegularExpressions.Regex]::Match($(_GitVersionJson), 'FullSemVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</Version>
+      <AssemblyVersion>$([System.Text.RegularExpressions.Regex]::Match($(_GitVersionJson), 'AssemblySemVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</AssemblyVersion>
+      <FileVersion>$([System.Text.RegularExpressions.Regex]::Match($(_GitVersionJson), 'AssemblySemFileVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</FileVersion>
+      <InformationalVersion>$([System.Text.RegularExpressions.Regex]::Match($(_GitVersionJson), 'InformationalVersion.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</InformationalVersion>
+      <ApplicationVersion>$([System.Text.RegularExpressions.Regex]::Match($(_GitVersionJson), 'AssemblySemFileVer.:\s*.?([^"""\r\n,]+)').Groups[1].Value)</ApplicationVersion>
+      <ApplicationRevision>0</ApplicationRevision>
+    </PropertyGroup>
+
+    <Message Importance="normal"
+             Text="Versionizer: $(MSBuildProjectName) → $(Version)" />
+  </Target>
+
+</Project>

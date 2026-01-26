@@ -153,6 +153,123 @@ Computes a final version string from GitVersion outputs and release context. For
 
 ---
 
+### `generate-changelog`
+
+Generates changelog content from git history (automatic releases) or the GitHub release body (manual releases).
+
+**Inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `is-manual-release` | *required* | From `check-release` output |
+| `release-body` | `''` | Body of the GitHub release (manual releases) |
+| `mod-version` | *required* | Version string (fallback text if no content) |
+| `repository` | *required* | `github.repository` for changelog links |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `content` | The generated changelog markdown |
+
+**Usage:**
+
+```yaml
+- uses: zannagh/versionizer/generate-changelog@v1
+  id: changelog
+  with:
+    is-manual-release: ${{ steps.release-check.outputs.is_manual_release }}
+    release-body: ${{ github.event.release.body }}
+    mod-version: ${{ steps.mod-ver.outputs.version }}
+    repository: ${{ github.repository }}
+```
+
+---
+
+### `create-prerelease`
+
+Creates a GitHub prerelease from build artifacts. Downloads the specified artifact, logs a preview of the release, and creates it via `softprops/action-gh-release`. The calling workflow must have `contents: write` permission.
+
+**Inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `version` | *required* | The version string (used for tag and release name) |
+| `changelog` | `''` | Changelog/body content for the release |
+| `artifact-name` | *required* | Name of the uploaded artifact to attach |
+| `artifact-pattern` | `artifacts/**/*` | Glob pattern for files to attach |
+| `tag-prefix` | `v` | Prefix for the git tag |
+| `dry-run` | `false` | If true, preview only without creating the release |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `release-url` | URL of the created release (empty on dry run) |
+
+**Usage:**
+
+```yaml
+- uses: zannagh/versionizer/create-prerelease@v1
+  with:
+    version: ${{ steps.mod-ver.outputs.version }}
+    changelog: ${{ steps.changelog.outputs.content }}
+    artifact-name: my-package-${{ steps.mod-ver.outputs.version }}
+    artifact-pattern: artifacts/**/*.nupkg
+    dry-run: ${{ inputs.dry_run }}
+```
+
+---
+
+### `workflow-summary`
+
+Generates a comprehensive GitHub Actions step summary with job results, version info, release decision details, and changelog. Writes to `GITHUB_STEP_SUMMARY`. Add project-specific sections via the `additional-sections` input.
+
+**Inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `version` | `''` | The package/release version |
+| `is-prerelease` | `''` | Whether this is a prerelease |
+| `semver` | `''` | The `majorMinorPatch` from GitVersion |
+| `full-semver` | `''` | The `fullSemVer` from GitVersion |
+| `prerelease-number` | `''` | The `preReleaseNumber` from GitVersion |
+| `commits-since` | `''` | The `commitsSinceVersionSource` from GitVersion |
+| `should-release` | `''` | Whether a release should be created |
+| `is-manual-release` | `''` | Whether this is a manual release |
+| `skip-reason` | `''` | Why the release was skipped |
+| `changelog` | `''` | The generated changelog content |
+| `job-results` | `''` | Multiline list of job results in `Job Name=status` format |
+| `additional-sections` | `''` | Additional markdown to append (for project-specific sections) |
+
+**Usage:**
+
+```yaml
+- uses: zannagh/versionizer/workflow-summary@v1
+  with:
+    version: ${{ needs.analyze.outputs.version }}
+    is-prerelease: ${{ needs.analyze.outputs.is_prerelease }}
+    semver: ${{ needs.analyze.outputs.semver }}
+    full-semver: ${{ needs.analyze.outputs.full_semver }}
+    prerelease-number: ${{ needs.analyze.outputs.prerelease_number }}
+    commits-since: ${{ needs.analyze.outputs.commits_since }}
+    should-release: ${{ needs.analyze.outputs.should_release }}
+    is-manual-release: ${{ needs.analyze.outputs.is_manual_release }}
+    skip-reason: ${{ needs.analyze.outputs.skip_reason }}
+    changelog: ${{ needs.changelog.outputs.content }}
+    job-results: |
+      Build=${{ needs.build.result }}
+      Test=${{ needs.test.result }}
+      Publish=${{ needs.publish.result }}
+    additional-sections: |
+      ### My Custom Section
+
+      - **Package**: my-package
+      - **Feed**: `https://nuget.pkg.github.com/my-org/index.json`
+```
+
+---
+
 ### `setup-gradle-env`
 
 Sets up a Java/Kotlin Gradle build environment: validates the Gradle wrapper, installs JDK, configures Gradle, and makes `gradlew` executable.
@@ -207,43 +324,67 @@ Sets up the .NET SDK with optional NuGet private feed authentication and GitVers
 
 ---
 
-## MSBuild Targets (Local .NET Versioning)
+## NuGet Package (Local .NET Versioning)
 
-`msbuild/GlobalVersioning.targets` provides automatic GitVersion-based versioning for local .NET development.
+The `Versionizer` NuGet package provides automatic GitVersion-based versioning that works in **every** .NET build environment — `dotnet build`, Visual Studio (any version), Rider, VSCode. Unlike `GitVersion.MsBuild`, it uses the CLI tool instead of a managed MSBuild task assembly, so there are no IDE compatibility issues.
+
+### Quick Start
+
+```xml
+<PackageReference Include="Versionizer" Version="1.0.0" PrivateAssets="all" />
+```
+
+That's it. On `dotnet build --configuration Release`, your project is versioned automatically from git history. Add `.gitversion.done` to your `.gitignore`.
 
 ### How It Works
 
-1. **Debug builds** skip GitVersion entirely and use `0.0.1-dev` — fast iteration, no git dependency.
-2. **Release builds** run `dotnet gitversion`, cache the JSON output in `.gitversion.done`, and reuse it until the Git HEAD changes.
-3. GitVersion tool is auto-installed globally if not found.
-
-### Setup
-
-Add to your `Directory.Build.props`:
-
-```xml
-<Project>
-  <Import Project="build/GlobalVersioning.targets" />
-
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <!-- ... -->
-  </PropertyGroup>
-</Project>
-```
-
-Copy `msbuild/GlobalVersioning.targets` into your project's `build/` directory, and add `.gitversion.done` to your `.gitignore`.
+1. **Debug builds** skip GitVersion entirely and use `0.0.1-dev` — no git overhead during development.
+2. **Release builds** run `dotnet gitversion`, cache the JSON output in `.gitversion.done` (keyed by HEAD SHA), and reuse it across all projects in the solution until HEAD changes.
+3. `gitversion.tool` is auto-installed globally if not found.
 
 ### Properties Set
 
-| MSBuild Property | Source |
-|-----------------|--------|
+| MSBuild Property | GitVersion Source |
+|-----------------|-------------------|
 | `Version` | `FullSemVer` |
 | `AssemblyVersion` | `AssemblySemVer` |
 | `FileVersion` | `AssemblySemFileVer` |
 | `InformationalVersion` | `InformationalVersion` |
 | `ApplicationVersion` | `AssemblySemFileVer` (for ClickOnce) |
 | `ApplicationRevision` | `0` |
+
+### Configuration
+
+| MSBuild Property | Default | Description |
+|-----------------|---------|-------------|
+| `VersionizerEnabled` | `true` | Set to `false` to disable for a specific project |
+| `VersionizerDebugVersion` | `0.0.1-dev` | Version string used in Debug builds |
+| `RepositoryRoot` | *(auto-detected)* | Override if auto-detection fails |
+
+```xml
+<!-- Disable for a specific project -->
+<PropertyGroup>
+  <VersionizerEnabled>false</VersionizerEnabled>
+</PropertyGroup>
+```
+
+### Manual Import (without NuGet)
+
+If you prefer not to use the NuGet package, copy `msbuild/GlobalVersioning.targets` into your project's `build/` directory and import it in `Directory.Build.props`:
+
+```xml
+<Project>
+  <Import Project="build/GlobalVersioning.targets" />
+</Project>
+```
+
+### Building the Package
+
+```bash
+cd nuget
+dotnet pack -c Release
+# Output: bin/Release/Versionizer.1.0.0.nupkg
+```
 
 ---
 

@@ -1,0 +1,83 @@
+name: Create Prerelease
+description: >
+  Creates a GitHub prerelease from build artifacts. Downloads the artifact,
+  logs a preview, and creates the release via softprops/action-gh-release.
+  The calling workflow must have 'contents: write' permission.
+
+inputs:
+  version:
+    description: The version string (used for tag and release name)
+    required: true
+  changelog:
+    description: Changelog/body content for the release
+    required: false
+    default: ''
+  artifact-name:
+    description: Name of the uploaded artifact to attach to the release
+    required: true
+  artifact-pattern:
+    description: Glob pattern for files to attach (e.g. "artifacts/**/*.nupkg")
+    required: false
+    default: 'artifacts/**/*'
+  tag-prefix:
+    description: Prefix for the git tag (e.g. "v")
+    required: false
+    default: 'v'
+  dry-run:
+    description: If true, preview only without creating the release
+    required: false
+    default: 'false'
+
+outputs:
+  release-url:
+    description: URL of the created release (empty on dry run)
+    value: ${{ steps.create.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download Artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: artifacts
+
+    - name: Preview GitHub Release
+      shell: bash
+      run: |
+        echo "=========================================="
+        echo "GITHUB PRERELEASE PREVIEW"
+        echo "=========================================="
+        echo ""
+        echo "  Tag:      ${{ inputs.tag-prefix }}${{ inputs.version }}"
+        echo "  Name:     ${{ inputs.version }}"
+        echo "  Type:     prerelease"
+        echo ""
+        echo "Artifacts:"
+        find artifacts -type f | while read -r f; do echo "  - $f"; done
+        echo ""
+        if [[ -n "${{ inputs.changelog }}" ]]; then
+          echo "Changelog:"
+          echo "---"
+          echo "${{ inputs.changelog }}"
+          echo "---"
+          echo ""
+        fi
+        if [[ "${{ inputs.dry-run }}" == "true" ]]; then
+          echo "DRY RUN - Skipping actual GitHub release creation"
+        else
+          echo "Will create GitHub release"
+        fi
+        echo "=========================================="
+
+    - name: Create Release
+      id: create
+      if: inputs.dry-run != 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.tag-prefix }}${{ inputs.version }}
+        name: ${{ inputs.version }}
+        body: ${{ inputs.changelog }}
+        prerelease: true
+        files: ${{ inputs.artifact-pattern }}
+        generate_release_notes: false

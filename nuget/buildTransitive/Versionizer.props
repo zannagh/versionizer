@@ -1,0 +1,12 @@
+<!--
+  Versionizer.props
+  Imported BEFORE the project file. Sets default property values.
+-->
+<Project>
+  <PropertyGroup>
+    <!-- Set to false in a .csproj to disable Versionizer for that project -->
+    <VersionizerEnabled Condition="'$(VersionizerEnabled)' == ''">true</VersionizerEnabled>
+    <!-- Version string used for Debug configuration builds (GitVersion is skipped) -->
+    <VersionizerDebugVersion Condition="'$(VersionizerDebugVersion)' == ''">0.0.1-dev</VersionizerDebugVersion>
+  </PropertyGroup>
+</Project>
