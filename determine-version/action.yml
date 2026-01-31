@@ -60,13 +60,36 @@ runs:
           COMMITS="${{ inputs.commits-since }}"
           PREFIX="${{ inputs.prerelease-prefix }}"
 
+          # Calculate initial prerelease number from GitVersion
           if [[ -n "$PRE_NUM" && "$PRE_NUM" != "0" ]]; then
-            VERSION="${SEMVER}-${PREFIX}.${PRE_NUM}"
+            COMPUTED_NUM="$PRE_NUM"
           else
-            VERSION="${SEMVER}-${PREFIX}.${COMMITS:-1}"
+            COMPUTED_NUM="${COMMITS:-1}"
           fi
+
+          # Find the highest existing prerelease number for this semver from git tags
+          # This prevents version regression when tags reset the commit count
+          HIGHEST_EXISTING=0
+          # Match tags like: preview-v0.7.3-pre.7, v0.7.3-pre.7, 0.7.3-pre.7
+          for tag in $(git tag -l "*${SEMVER}-${PREFIX}.*" 2>/dev/null || true); do
+            # Extract the number after the last dot
+            NUM=$(echo "$tag" | grep -oE "${PREFIX}\.[0-9]+" | grep -oE "[0-9]+$" || true)
+            if [[ -n "$NUM" && "$NUM" -gt "$HIGHEST_EXISTING" ]]; then
+              HIGHEST_EXISTING="$NUM"
+            fi
+          done
+
+          # Ensure we always increment past the highest existing version
+          if [[ "$COMPUTED_NUM" -le "$HIGHEST_EXISTING" ]]; then
+            FINAL_NUM=$((HIGHEST_EXISTING + 1))
+            echo "::warning::GitVersion computed ${PREFIX}.${COMPUTED_NUM} but ${PREFIX}.${HIGHEST_EXISTING} already exists. Incrementing to ${PREFIX}.${FINAL_NUM}"
+          else
+            FINAL_NUM="$COMPUTED_NUM"
+          fi
+
+          VERSION="${SEMVER}-${PREFIX}.${FINAL_NUM}"
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          echo "Automatic prerelease version: $VERSION"
+          echo "Automatic prerelease version: $VERSION (computed: ${COMPUTED_NUM}, highest existing: ${HIGHEST_EXISTING})"
         fi
